@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "230750693641",
+    "project_id": "todo-a-mil-mae",
+    "storage_bucket": "todo-a-mil-mae.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:230750693641:android:0334ceb2ab425d88188bd8",
+        "android_client_info": {
+          "package_name": "com.example.todo_a_mil_mae"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBUFsZnExr1sHcpXNOr-xszCx4SymsT1xE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
