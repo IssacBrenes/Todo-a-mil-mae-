@@ -1,32 +1,35 @@
 // lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
-// ignore: unused_import
-import 'package:todo_a_mil_mae/screens/auth_screen.dart';
-import 'package:todo_a_mil_mae/screens/main_screen.dart';
-import 'firebase_options.dart';
-import 'providers/carrito_provider.dart';
-// ignore: unused_import
-import 'screens/menu_principal.dart';
 
+import 'firebase_options.dart'; 
+import 'providers/carrito_provider.dart';
+import 'screens/auth_screen.dart';
+import 'screens/main_screen.dart';
+import 'screens/registro_nombre_screen.dart';
+
+// EL PUNTO DE ARRANQUE (Lo que Chrome no encontraba)
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
   runApp(
-    ChangeNotifierProvider(
-      create: (context) => CarritoProvider(),
-      child: const TodoAMilApp(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => CarritoProvider()),
+      ],
+      child: const TodoAMilMaeApp(),
     ),
   );
 }
 
-class TodoAMilApp extends StatelessWidget {
-  const TodoAMilApp({super.key});
+class TodoAMilMaeApp extends StatelessWidget {
+  const TodoAMilMaeApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -34,9 +37,52 @@ class TodoAMilApp extends StatelessWidget {
       title: 'Todo a mil mae!',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        primarySwatch: Colors.green,
+        primarySwatch: Colors.orange,
+        fontFamily: 'Roboto', 
       ),
-      home: const MainScreen(),
+      home: StreamBuilder<User?>(
+        stream: FirebaseAuth.instance.authStateChanges(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Scaffold(
+              backgroundColor: Color(0xFFFFF9E6),
+              body: Center(child: CircularProgressIndicator(color: Colors.orange)),
+            );
+          }
+          
+          if (snapshot.hasData) {
+            return VerificadorPerfil(usuario: snapshot.data!); 
+          }
+          
+          return const AuthScreen();
+        },
+      ),
+    );
+  }
+}
+
+class VerificadorPerfil extends StatelessWidget {
+  final User usuario;
+  const VerificadorPerfil({super.key, required this.usuario});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<DocumentSnapshot>(
+      future: FirebaseFirestore.instance.collection('usuarios').doc(usuario.uid).get(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            backgroundColor: Color(0xFFFFF9E6),
+            body: Center(child: CircularProgressIndicator(color: Colors.orange)),
+          );
+        }
+        
+        if (snapshot.hasData && snapshot.data!.exists) {
+          return const MainScreen();
+        } 
+        
+        return const RegistroNombreScreen();
+      },
     );
   }
 }

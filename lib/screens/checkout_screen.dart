@@ -1,6 +1,8 @@
 // lib/screens/checkout_screen.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // 
 
 import '../providers/carrito_provider.dart';
 import '../models/inventario_motor.dart';
@@ -458,7 +460,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ),
             const SizedBox(height: 24),
 
-            // --- INICIO DEL BOTÓN REEMPLAZADO ---
+           // --- INICIO DEL BOTÓN REEMPLAZADO ---
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -472,25 +474,127 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 ),
                 onPressed: botonBloqueado
                     ? null
-                    : () {
-                        final descuento = MotorInventario.calcularDescuento(
-                          carrito.items,
-                        );
-                        print('Inventario descontado: $descuento');
-
-                        // 1. Limpiamos el carrito al confirmar
-                        carrito.limpiarCarrito();
-
-                        // 2. Navegamos al Rastreador, eliminando el Checkout del historial
-                        Navigator.pushAndRemoveUntil(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const MainScreen(
-                              indiceInicial: 1,
-                            ), // Lo manda directo a la pestaña de Pedidos
+                    : () async {
+                        // 1. Mostrar indicador de carga para evitar doble toque
+                        showDialog(
+                          context: context,
+                          barrierDismissible: false,
+                          builder: (context) => const Center(
+                            child: CircularProgressIndicator(color: Colors.orange),
                           ),
-                          (route) => false, // Elimina el checkout del historial
                         );
+
+                        try {
+                          final db = FirebaseFirestore.instance;
+                          final batch = db.batch();
+
+                          // --- CONTADOR EXTRA DE JUGOS ---
+                          int totalJugos = 0;
+
+                          // --- PILAR 1: EL TIMBRE DIGITAL (La Comanda) ---
+                          final pedidoRef = db.collection('pedidos').doc();
+                          
+                          final itemsMap = carrito.items.map((item) {
+                            // Sumamos los jugos: ya sea como producto individual o como extra
+                            if (item.producto.id == 'jugo' || item.producto.id == 'fresco') {
+                              totalJugos += item.cantidad;
+                            }
+                            if (item.llevaJugo) {
+                              totalJugos += item.cantidad;
+                            }
+
+                            return {
+                              'producto_id': item.producto.id,
+                              'nombre': item.producto.nombre,
+                              'cantidad': item.cantidad,
+                              'precio_unitario': item.producto.precioVenta,
+                              'llevaExtraPapas': item.llevaExtraPapas,
+                              'llevaSalsaExtra': item.llevaSalsaExtra,
+                              'llevaJugo': item.llevaJugo,
+                              'sinTomate': item.sinTomate,
+                              'sinLechuga': item.sinLechuga,
+                            };
+                          }).toList();
+
+                          batch.set(pedidoRef, {
+                            // Usamos el ID real si existe, si no, lo marcamos como invitado
+                            'cliente_id': FirebaseAuth.instance.currentUser?.uid ?? 'invitado', 
+                            'cliente_nombre': 'Isaac', // Podrás conectar esto al perfil luego
+                            'telefono': '8888-8888',
+                            'metodo_entrega': _tipoEntrega,
+                            'zona_express': _zonaSeleccionada?.nombre ?? 'N/A',
+                            'costo_envio': costoEnvio,
+                            'metodo_pago': _metodoPago,
+                            'notas_cocina': _notasController.text,
+                            'subtotal': subtotalCarrito,
+                            'gran_total': granTotal,
+                            'estado': 'Recibido',
+                            'fecha_orden': FieldValue.serverTimestamp(),
+                            'items': itemsMap,
+                          });
+
+                          // --- PILAR 2: EL DESCUENTO AUTOMÁTICO ---
+                          final descuento = MotorInventario.calcularDescuento(carrito.items);
+                          
+                          if ((descuento['hamburguesas'] ?? 0) > 0) {
+                            batch.update(db.collection('productos').doc('hamburguesa'), 
+                              {'stock': FieldValue.increment(-(descuento['hamburguesas'] as int))});
+                          }
+                          if ((descuento['tacos'] ?? 0) > 0) {
+                            batch.update(db.collection('productos').doc('taco'), 
+                              {'stock': FieldValue.increment(-(descuento['tacos'] as int))});
+                          }
+                          if ((descuento['ordenesPapas'] ?? 0) > 0) {
+                            batch.update(db.collection('productos').doc('papas'), 
+                              {'stock': FieldValue.increment(-(descuento['ordenesPapas'] as int))});
+                          }
+                          // NUEVO: Descuento de Jugos
+                          if (totalJugos > 0) {
+                            // Cambia 'jugo' por 'fresco' si así se llama el documento en tu Firebase
+                            batch.update(db.collection('productos').doc('jugo'), 
+                              {'stock': FieldValue.increment(-totalJugos)});
+                          }
+
+                          // --- PILAR 3: LAS RECOMPENSAS (CORREGIDO) ---
+                          int puntosGanados = (granTotal / 1000).floor();
+                          final String? uid = FirebaseAuth.instance.currentUser?.uid;
+                          
+                          if (uid != null && puntosGanados > 0) {
+                            final userRef = db.collection('usuarios').doc(uid);
+                            // Usamos update para sumar sobre el atributo "puntos" que ya existe
+                            batch.update(userRef, {
+                              'puntos': FieldValue.increment(puntosGanados)
+                            });
+                          }
+
+                          // --- EJECUCIÓN MAESTRA ---
+                          await batch.commit(); 
+
+                          if (context.mounted) Navigator.pop(context);
+
+                          carrito.limpiarCarrito();
+                          if (context.mounted) {
+                            Navigator.pushAndRemoveUntil(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const MainScreen(indiceInicial: 1),
+                              ),
+                              (route) => false,
+                            );
+                          }
+
+                        } catch (e) {
+                          // Si falla el internet o Firebase, quitamos el loading y avisamos
+                          if (context.mounted) {
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Error al enviar la orden: $e'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        }
                       },
                 child: Text(
                   textoBoton,

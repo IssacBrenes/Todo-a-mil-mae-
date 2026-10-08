@@ -1,9 +1,6 @@
 // lib/screens/auth_screen.dart
 import 'package:flutter/material.dart';
-import 'main_screen.dart';
-
-// ignore: unused_import
-import 'menu_principal.dart'; // Asegúrate de que la ruta sea correcta
+import 'package:firebase_auth/firebase_auth.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -13,61 +10,66 @@ class AuthScreen extends StatefulWidget {
 }
 
 class _AuthScreenState extends State<AuthScreen> {
-  // Estados: 0 = Teléfono, 1 = Código SMS, 2 = Nombre (Usuario Nuevo)
-  int _pasoActual = 0;
-
+  int _pasoActual = 0; 
   final TextEditingController _telefonoController = TextEditingController();
   final TextEditingController _codigoController = TextEditingController();
-  final TextEditingController _nombreController = TextEditingController();
-
+  
   bool _cargando = false;
+  String _verificationId = '';
 
-  // 1. Simulación de envío de SMS (Firebase Auth)
-  void _enviarSMS() {
+  // 1. Conexión real con Firebase para enviar SMS
+  void _enviarSMS() async {
     if (_telefonoController.text.length < 8) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ingresa un número de 8 dígitos válido')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ingresa un número de 8 dígitos válido')));
       return;
     }
+    
     setState(() => _cargando = true);
-
-    // Simula el tiempo de red de Firebase
-    Future.delayed(const Duration(seconds: 2), () {
-      setState(() {
-        _cargando = false;
-        _pasoActual = 1; // Avanza a pedir el código
-      });
-    });
+    
+    try {
+      await FirebaseAuth.instance.verifyPhoneNumber(
+        phoneNumber: '+506${_telefonoController.text.trim()}',
+        // Auto-resolución para algunos dispositivos Android
+        verificationCompleted: (PhoneAuthCredential credential) async {
+          await FirebaseAuth.instance.signInWithCredential(credential);
+        },
+        verificationFailed: (FirebaseAuthException e) {
+          setState(() => _cargando = false);
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+        },
+        // Cuando el SMS sale de los servidores de Google
+        codeSent: (String verificationId, int? resendToken) {
+          setState(() {
+            _verificationId = verificationId;
+            _cargando = false;
+            _pasoActual = 1; // Transforma la pantalla para pedir el código
+          });
+        },
+        codeAutoRetrievalTimeout: (String verificationId) {},
+      );
+    } catch (e) {
+      setState(() => _cargando = false);
+    }
   }
 
-  // 2. Simulación de verificación de código SMS
-  void _verificarCodigo() {
+  // 2. Verificación del código digitado por el cliente
+  void _verificarCodigo() async {
     if (_codigoController.text.length < 6) return;
     setState(() => _cargando = true);
 
-    Future.delayed(const Duration(seconds: 2), () {
-      setState(() {
-        _cargando = false;
-        // Lógica futura: Si Firebase dice que es usuario nuevo, pasamos al paso 2.
-        // Si ya existe, lo mandamos directo al menú. Aquí simularemos que es nuevo.
-        _pasoActual = 2;
-      });
-    });
-  }
-
-  // 3. Simulación de guardado de perfil (Firestore)
-  void _guardarPerfil() {
-    if (_nombreController.text.trim().isEmpty) return;
-    setState(() => _cargando = true);
-
-    Future.delayed(const Duration(seconds: 1), () {
+    try {
+      PhoneAuthCredential credential = PhoneAuthProvider.credential(
+        verificationId: _verificationId,
+        smsCode: _codigoController.text.trim(),
+      );
+      
+      // Al iniciar sesión exitosamente, el StreamBuilder del main.dart nos sacará de aquí automáticamente
+      await FirebaseAuth.instance.signInWithCredential(credential);
+      
+    } catch (e) {
       setState(() => _cargando = false);
-      // Redirige al menú principal y elimina la pantalla de login del historial
-      Navigator.of(
-        context,
-      ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
-    });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Código incorrecto o expirado', style: TextStyle(color: Colors.white)), backgroundColor: Colors.red));
+    }
   }
 
   @override
@@ -84,41 +86,22 @@ class _AuthScreenState extends State<AuthScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // Logo o Título
                 Container(
                   padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: amarilloPrincipal,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.fastfood,
-                    size: 60,
-                    color: Colors.black87,
-                  ),
+                  decoration: BoxDecoration(color: amarilloPrincipal, shape: BoxShape.circle),
+                  child: const Icon(Icons.fastfood, size: 60, color: Colors.black87),
                 ),
                 const SizedBox(height: 24),
-                const Text(
-                  'Todo a mil mae!',
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
-                ),
+                const Text('Todo a mil mae!', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black87)),
                 const SizedBox(height: 8),
                 Text(
-                  _pasoActual == 0
-                      ? 'Ingresa para pedir sin complicaciones'
-                      : _pasoActual == 1
-                      ? 'Ingresa el código que te enviamos'
-                      : '¡Casi listos! ¿Cómo te llamamos?',
+                  _pasoActual == 0 ? 'Ingresa para pedir sin complicaciones' : 'Ingresa el código que te enviamos',
                   style: const TextStyle(fontSize: 16, color: Colors.grey),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 32),
 
-                // PASO 0: INGRESAR TELÉFONO
+                // PASO 0: TELÉFONO
                 if (_pasoActual == 0) ...[
                   TextField(
                     controller: _telefonoController,
@@ -126,18 +109,11 @@ class _AuthScreenState extends State<AuthScreen> {
                     maxLength: 8,
                     decoration: InputDecoration(
                       prefixText: '+506 ',
-                      prefixStyle: const TextStyle(
-                        color: Colors.black87,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      prefixStyle: const TextStyle(color: Colors.black87, fontSize: 16, fontWeight: FontWeight.bold),
                       labelText: 'Número de Teléfono',
                       filled: true,
                       fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
                       counterText: '',
                     ),
                   ),
@@ -148,52 +124,29 @@ class _AuthScreenState extends State<AuthScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: amarilloPrincipal,
                         padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
                       onPressed: _cargando ? null : _enviarSMS,
-                      child: _cargando
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(
-                                color: Colors.black87,
-                                strokeWidth: 2,
-                              ),
-                            )
-                          : const Text(
-                              'Enviar código por SMS',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87,
-                              ),
-                            ),
+                      child: _cargando 
+                          ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.black87, strokeWidth: 2))
+                          : const Text('Enviar código por SMS', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
                     ),
                   ),
                 ],
 
-                // PASO 1: INGRESAR CÓDIGO SMS
+                // PASO 1: CÓDIGO SMS
                 if (_pasoActual == 1) ...[
                   TextField(
                     controller: _codigoController,
                     keyboardType: TextInputType.number,
                     maxLength: 6,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 24,
-                      letterSpacing: 8,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: const TextStyle(fontSize: 24, letterSpacing: 8, fontWeight: FontWeight.bold),
                     decoration: InputDecoration(
                       hintText: '000000',
                       filled: true,
                       fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
                       counterText: '',
                     ),
                   ),
@@ -204,86 +157,18 @@ class _AuthScreenState extends State<AuthScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: amarilloPrincipal,
                         padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
                       onPressed: _cargando ? null : _verificarCodigo,
-                      child: _cargando
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(
-                                color: Colors.black87,
-                                strokeWidth: 2,
-                              ),
-                            )
-                          : const Text(
-                              'Verificar Código',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87,
-                              ),
-                            ),
+                      child: _cargando 
+                          ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.black87, strokeWidth: 2))
+                          : const Text('Verificar Código', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
                     ),
                   ),
                   TextButton(
                     onPressed: () => setState(() => _pasoActual = 0),
-                    child: const Text(
-                      'Cambiar número de teléfono',
-                      style: TextStyle(color: Colors.orange),
-                    ),
-                  ),
-                ],
-
-                // PASO 2: INGRESAR NOMBRE (Usuario Nuevo)
-                if (_pasoActual == 2) ...[
-                  TextField(
-                    controller: _nombreController,
-                    keyboardType: TextInputType.name,
-                    textCapitalization: TextCapitalization.words,
-                    decoration: InputDecoration(
-                      labelText: 'Tu Nombre (Ej. Isaac)',
-                      filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: amarilloPrincipal,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      onPressed: _cargando ? null : _guardarPerfil,
-                      child: _cargando
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(
-                                color: Colors.black87,
-                                strokeWidth: 2,
-                              ),
-                            )
-                          : const Text(
-                              'Comenzar a pedir',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87,
-                              ),
-                            ),
-                    ),
-                  ),
+                    child: const Text('Cambiar número de teléfono', style: TextStyle(color: Colors.orange)),
+                  )
                 ],
               ],
             ),
